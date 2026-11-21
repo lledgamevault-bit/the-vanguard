@@ -358,10 +358,10 @@ $('chips-row').addEventListener('click', e => {
 });
 // ── Fuzzy name matching ───────────────────────────────────────────────────────
 function normalizeForMatch(s) {
-  // lowercase, strip accents/special chars, keep alphanumeric only
   return s.toLowerCase()
-    .normalize('NFD').replace(/[̀-ͯ]/g,'') // strip diacritics
-    .replace(/[^a-z0-9]/g,''); // strip non-alphanumeric
+    .normalize('NFD').replace(/[̀-ͯ]/g,'') // strip diacritics (ë→e, ø→o, î→i, ü→u etc)
+    .replace(/[^\x00-\x7F]/g,'') // strip ALL non-ASCII (removes 丶 and other CJK/special)
+    .replace(/[^a-z0-9]/g,''); // strip remaining non-alphanumeric
 }
 function fuzzyMatchRoster(name) {
   if (!roster.length) return null;
