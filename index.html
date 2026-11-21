@@ -275,10 +275,12 @@ let pendingFiles = [];  // {file, dataUrl, status}
 let events = [];        // all logged events
 let roster = [];        // known member list
 let memberData = {};    // computed from events
+let aliases = {};       // {extractedName: rosterName} — saved mappings
 
 function loadData() {
   events = store.get('vg-events', []);
   roster = store.get('vg-roster', []);
+  aliases = store.get('vg-aliases', {});
   buildMemberData();
 }
 function saveEvents() { store.set('vg-events', events); }
@@ -365,8 +367,14 @@ function normalizeForMatch(s) {
 }
 function fuzzyMatchRoster(name) {
   if (!roster.length) return null;
+  // check saved aliases first
+  if (aliases[name]) return aliases[name];
   const norm = normalizeForMatch(name);
-  // exact normalized match
+  // check alias values by normalized form too
+  for (const [alias, rosterName] of Object.entries(aliases)) {
+    if (normalizeForMatch(alias) === norm) return rosterName;
+  }
+  // exact normalized match against roster
   for (const r of roster) { if (normalizeForMatch(r) === norm) return r; }
   return null;
 }
@@ -380,17 +388,55 @@ function renderUnrecognized() {
   panel.style.display = 'block';
   row.innerHTML = '';
   unrecognized.forEach(name => {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:4px;flex-wrap:wrap;';
+
     const chip = document.createElement('span');
     chip.className = 'chip';
-    chip.style.cssText = 'cursor:pointer;border-color:var(--amber);color:var(--amber);';
-    chip.title = 'Click to add to attendees';
-    chip.innerHTML = `${name} <span style="opacity:.6">+</span>`;
-    chip.addEventListener('click', () => {
-      addMember(name);
+    chip.style.cssText = 'border-color:var(--amber);color:var(--amber);';
+    chip.textContent = name;
+    wrap.appendChild(chip);
+
+    // dropdown to map to roster member
+    const sel = document.createElement('select');
+    sel.style.cssText = 'font-size:12px;padding:2px 4px;border-radius:5px;border:1px solid var(--border);background:var(--bg2);color:var(--fg);max-width:180px;';
+    sel.innerHTML = `<option value="">— map to roster member —</option>` +
+      roster.map(r => `<option value="${r}">${r}</option>`).join('') +
+      `<option value="__new__">+ Add as new member</option>`;
+    wrap.appendChild(sel);
+
+    const addBtn = document.createElement('button');
+    addBtn.className = 'btn btn-secondary btn-sm';
+    addBtn.textContent = 'Add';
+    addBtn.addEventListener('click', () => {
+      const val = sel.value;
+      if (!val) { toast('Pick a roster member or "Add as new"'); return; }
+      if (val === '__new__') {
+        addMember(name);
+        // optionally add to roster
+        if (!roster.includes(name)) { roster.push(name); store.set('vg-roster', roster); }
+      } else {
+        // save alias mapping
+        aliases[name] = val;
+        store.set('vg-aliases', aliases);
+        addMember(val);
+      }
       unrecognized = unrecognized.filter(x => x !== name);
       renderUnrecognized();
     });
-    row.appendChild(chip);
+    wrap.appendChild(addBtn);
+
+    const skipBtn = document.createElement('button');
+    skipBtn.className = 'btn btn-secondary btn-sm';
+    skipBtn.style.cssText = 'opacity:.5;';
+    skipBtn.textContent = 'Skip';
+    skipBtn.addEventListener('click', () => {
+      unrecognized = unrecognized.filter(x => x !== name);
+      renderUnrecognized();
+    });
+    wrap.appendChild(skipBtn);
+
+    row.appendChild(wrap);
   });
 }
 
