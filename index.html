@@ -481,11 +481,8 @@ async function handleFiles(fileList) {
     const evType = $('ev-type').value;
     const prompt = "This is a Diablo Immortal screenshot. List every player/member name you can see, one per line, exactly as shown. Output ONLY the names, nothing else.";
     try {
-      // For Vigil of Blades, crop to left half before sending to AI
-      let imageDataUrl = pf.dataUrl;
-      if (evType === 'Vigil of Blades') {
-        imageDataUrl = await cropLeftHalf(pf.dataUrl);
-      }
+      // Crop to left half before sending to AI
+      const imageDataUrl = await cropLeftHalf(pf.dataUrl);
       const b64 = imageDataUrl.split(',')[1];
       const mediaType = imageDataUrl.split(';')[0].split(':')[1];
       const resp = await fetch('https://vanguard-proxy.lledgamevault.workers.dev/', {
