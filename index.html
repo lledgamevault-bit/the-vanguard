@@ -401,7 +401,7 @@ function renderUnrecognized() {
     const sel = document.createElement('select');
     sel.style.cssText = 'font-size:12px;padding:2px 4px;border-radius:5px;border:1px solid var(--border);background:var(--bg2);color:var(--fg);max-width:180px;';
     sel.innerHTML = `<option value="">— map to roster member —</option>` +
-      [...roster].sort((a,b) => a.localeCompare(b, undefined, {sensitivity:'base'})).map(r => `<option value="${r}">${r}</option>`).join('') +
+      [...roster].sort((a,b) => normalizeForMatch(a).localeCompare(normalizeForMatch(b))).map(r => `<option value="${r}">${r}</option>`).join('') +
       `<option value="__new__">+ Add as new member</option>`;
     wrap.appendChild(sel);
 
@@ -414,7 +414,7 @@ function renderUnrecognized() {
       if (val === '__new__') {
         addMember(name);
         // optionally add to roster
-        if (!roster.includes(name)) { roster.push(name); store.set('vg-roster', roster); }
+        if (!roster.includes(name)) { roster.push(name); roster = sortRoster(roster); store.set('vg-roster', roster); }
       } else {
         // save alias mapping
         aliases[name] = val;
@@ -701,13 +701,16 @@ function renderHistory() {
 }
 
 // ── Render Settings ───────────────────────────────────────────────────────────
+function sortRoster(r) {
+  return [...r].sort((a,b) => normalizeForMatch(a).localeCompare(normalizeForMatch(b)));
+}
 function renderSettings() {
-  $('roster-input').value=roster.join('\n');
+  $('roster-input').value=sortRoster(roster).join('\n');
   updateApiKeyStatus();
 }
 $('save-roster-btn').addEventListener('click',()=>{
-  roster=$('roster-input').value.split('\n').map(x=>x.trim()).filter(Boolean);
-  store.set('vg-roster',roster); toast(`✅ Roster saved — ${roster.length} members`);
+  roster=sortRoster($('roster-input').value.split('\n').map(x=>x.trim()).filter(Boolean));
+  store.set('vg-roster',roster); renderSettings(); toast(`✅ Roster saved — ${roster.length} members`);
 });
 $('clear-all-btn').addEventListener('click',()=>{
   if(!confirm('Delete ALL attendance data? This cannot be undone.'))return;
