@@ -411,7 +411,7 @@ async function handleFiles(fileList) {
     $('processing-text').textContent = `Analyzing screenshot ${i - startIdx + 1} of ${newEntries.length}…`;
     const evType = $('ev-type').value;
     const prompt = evType === 'Vigil of Blades'
-      ? "This is a Diablo Immortal Vigil of Blades screenshot showing two sides: Immortals (left) vs Shadows (right). List ONLY the player names from the LEFT side (Vanguard's side), one per line, exactly as shown. Output ONLY the names, nothing else."
+      ? "This is a Diablo Immortal Vigil of Blades battle result screenshot. There are two panels side by side: on the LEFT is a BLUE panel with the header 'Immortals' — this is Vanguard's side. On the RIGHT is a RED panel with the header 'Shadows' — these are the opponents. List ONLY the player names from the LEFT blue 'Immortals' panel, one per line, exactly as shown. Do NOT include any names from the right red 'Shadows' panel. Output ONLY the names, nothing else."
       : "This is a Diablo Immortal clan screenshot. List every player/member name you can see, one per line, exactly as shown. Output ONLY the names, nothing else.";
     try {
       const b64 = pf.dataUrl.split(',')[1];
