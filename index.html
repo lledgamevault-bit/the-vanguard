@@ -368,10 +368,10 @@ function fuzzyMatchRoster(name) {
   const norm = normalizeForMatch(name);
   // exact normalized match
   for (const r of roster) { if (normalizeForMatch(r) === norm) return r; }
-  // substring match (one contains the other)
+  // substring match — only if both normalized forms are at least 4 chars
   for (const r of roster) {
     const rn = normalizeForMatch(r);
-    if (norm.length >= 3 && (rn.includes(norm) || norm.includes(rn))) return r;
+    if (norm.length >= 4 && rn.length >= 4 && (rn.includes(norm) || norm.includes(rn))) return r;
   }
   return null;
 }
@@ -407,10 +407,12 @@ function addMember(name) {
 function addMemberFromVision(name) {
   const n = name.trim(); if (!n) return;
   if (!roster.length) { addMember(n); return; } // no roster = add all
+  // always try to match, but if normalized form is too short, skip substring match
   const matched = fuzzyMatchRoster(n);
   if (matched) {
     addMember(matched); // use canonical roster name
   } else {
+    // show in unrecognized panel — never silently drop
     if (!unrecognized.includes(n) && !members.includes(n)) unrecognized.push(n);
   }
 }
