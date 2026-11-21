@@ -415,7 +415,7 @@ async function handleFiles(fileList) {
       : "This is a Diablo Immortal clan screenshot. List every player/member name you can see, one per line, exactly as shown. Output ONLY the names, nothing else.";
     try {
       const b64 = pf.dataUrl.split(',')[1];
-      const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      const resp = await fetch('https://vanguard-proxy.lledgamevault.workers.dev/', {
         method: 'POST',
         headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
         body: JSON.stringify({
