@@ -180,6 +180,10 @@ textarea{resize:vertical;min-height:80px;}
         <div class="form-row" style="margin-top:14px">
           <label>Members Present <span style="color:var(--fg3);font-weight:400">(edit as needed before saving)</span></label>
           <div class="chips-row" id="chips-row"></div>
+          <div id="unrecognized-panel" style="display:none;margin-top:10px;padding:10px 12px;background:var(--bg3);border:1px solid var(--amber);border-radius:8px;">
+            <div style="font-size:12px;font-weight:600;color:var(--amber);margin-bottom:6px;">⚠️ Unrecognized names — not in roster (click to add)</div>
+            <div class="chips-row" id="unrecognized-chips"></div>
+          </div>
           <div style="display:flex;gap:8px;margin-top:6px">
             <input type="text" id="name-input" placeholder="Add member name…" style="flex:1">
             <button class="btn btn-secondary btn-sm" id="add-name-btn">Add</button>
@@ -352,9 +356,63 @@ $('chips-row').addEventListener('click', e => {
     members = members.filter(x => x !== e.target.dataset.name); renderChips();
   }
 });
+// ── Fuzzy name matching ───────────────────────────────────────────────────────
+function normalizeForMatch(s) {
+  // lowercase, strip accents/special chars, keep alphanumeric only
+  return s.toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g,'') // strip diacritics
+    .replace(/[^a-z0-9]/g,''); // strip non-alphanumeric
+}
+function fuzzyMatchRoster(name) {
+  if (!roster.length) return null;
+  const norm = normalizeForMatch(name);
+  // exact normalized match
+  for (const r of roster) { if (normalizeForMatch(r) === norm) return r; }
+  // substring match (one contains the other)
+  for (const r of roster) {
+    const rn = normalizeForMatch(r);
+    if (norm.length >= 3 && (rn.includes(norm) || norm.includes(rn))) return r;
+  }
+  return null;
+}
+
+let unrecognized = []; // names from vision that didn't match roster
+
+function renderUnrecognized() {
+  const panel = $('unrecognized-panel');
+  const row = $('unrecognized-chips');
+  if (!unrecognized.length) { panel.style.display = 'none'; return; }
+  panel.style.display = 'block';
+  row.innerHTML = '';
+  unrecognized.forEach(name => {
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.style.cssText = 'cursor:pointer;border-color:var(--amber);color:var(--amber);';
+    chip.title = 'Click to add to attendees';
+    chip.innerHTML = `${name} <span style="opacity:.6">+</span>`;
+    chip.addEventListener('click', () => {
+      addMember(name);
+      unrecognized = unrecognized.filter(x => x !== name);
+      renderUnrecognized();
+    });
+    row.appendChild(chip);
+  });
+}
+
 function addMember(name) {
   const n = name.trim(); if (!n || members.includes(n)) return;
   members.push(n); renderChips();
+}
+
+function addMemberFromVision(name) {
+  const n = name.trim(); if (!n) return;
+  if (!roster.length) { addMember(n); return; } // no roster = add all
+  const matched = fuzzyMatchRoster(n);
+  if (matched) {
+    addMember(matched); // use canonical roster name
+  } else {
+    if (!unrecognized.includes(n) && !members.includes(n)) unrecognized.push(n);
+  }
 }
 $('add-name-btn').addEventListener('click', () => { addMember($('name-input').value); $('name-input').value = ''; });
 $('name-input').addEventListener('keydown', e => { if (e.key==='Enter') { e.preventDefault(); addMember($('name-input').value); $('name-input').value = ''; }});
@@ -410,9 +468,7 @@ async function handleFiles(fileList) {
     const pf = pendingFiles[i];
     $('processing-text').textContent = `Analyzing screenshot ${i - startIdx + 1} of ${newEntries.length}…`;
     const evType = $('ev-type').value;
-    const prompt = evType === 'Vigil of Blades'
-      ? "This is a Diablo Immortal Vigil of Blades battle result screenshot. There are two panels side by side: on the LEFT is a BLUE panel with the header 'Immortals' — this is Vanguard's side. On the RIGHT is a RED panel with the header 'Shadows' — these are the opponents. List ONLY the player names from the LEFT blue 'Immortals' panel, one per line, exactly as shown. Do NOT include any names from the right red 'Shadows' panel. Output ONLY the names, nothing else."
-      : "This is a Diablo Immortal clan screenshot. List every player/member name you can see, one per line, exactly as shown. Output ONLY the names, nothing else.";
+    const prompt = "This is a Diablo Immortal screenshot. List every player/member name you can see, one per line, exactly as shown. Output ONLY the names, nothing else.";
     try {
       const b64 = pf.dataUrl.split(',')[1];
       const resp = await fetch('https://vanguard-proxy.lledgamevault.workers.dev/', {
@@ -431,7 +487,7 @@ async function handleFiles(fileList) {
       if (data.error) throw new Error(data.error.message);
       const text = data.content?.[0]?.text || '';
       const names = text.split('\n').map(x => x.replace(/^[-•*\d.)\s]+/,'').trim()).filter(Boolean);
-      names.forEach(addMember);
+      names.forEach(addMemberFromVision);
       totalFound += names.length;
       pf.status = 'done';
     } catch(err) {
@@ -442,7 +498,8 @@ async function handleFiles(fileList) {
     renderPreviewGrid();
   }
   $('processing-banner').classList.remove('visible');
-  if (totalFound > 0) toast(`✅ Done — ${totalFound} names found across ${newEntries.length} screenshot${newEntries.length>1?'s':''}`);
+  renderUnrecognized();
+  if (totalFound > 0) toast(`✅ Done — ${members.length} matched, ${unrecognized.length} unrecognized`);
 }
 
 // ── Save Event ────────────────────────────────────────────────────────────────
@@ -459,13 +516,13 @@ $('save-event-btn').addEventListener('click', () => {
   };
   events.unshift(ev); saveEvents(); buildMemberData();
   toast(`✅ Saved — ${members.length} attendees logged`);
-  members = []; renderChips();
+  members = []; unrecognized = []; renderChips(); renderUnrecognized();
   $('ev-notes').value = '';
   $('ev-date').value = new Date().toISOString().slice(0,10);
   pendingFiles = []; renderPreviewGrid();
 });
 $('clear-btn').addEventListener('click', () => {
-  members = []; renderChips(); $('names-paste').value = '';
+  members = []; unrecognized = []; renderChips(); renderUnrecognized(); $('names-paste').value = '';
   pendingFiles = []; renderPreviewGrid();
 });
 
