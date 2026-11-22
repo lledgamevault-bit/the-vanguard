@@ -117,6 +117,7 @@ textarea{resize:vertical;min-height:80px;}
       <button class="nav-tab" data-page="members">👥 Members</button>
       <button class="nav-tab" data-page="at-risk">⚠️ At Risk</button>
       <button class="nav-tab" data-page="history">📋 History</button>
+      <button class="nav-tab" data-page="reigns">👑 Reigns</button>
       <button class="nav-tab" data-page="settings">⚙️ Settings 🔒</button>
     </div>
   </nav>
@@ -223,12 +224,13 @@ textarea{resize:vertical;min-height:80px;}
     <!-- AT RISK -->
     <div class="page" id="page-at-risk">
       <div class="card">
-        <div class="card-title">⚠️ At-Risk Members — Bottom 10</div>
+        <div class="card-title">⚠️ At-Risk Members — Bottom 20</div>
         <p style="font-size:13px;color:var(--fg2);margin-bottom:14px">Ranked by a combined risk score: low attendance count, low attendance %, and consecutive missed events. Review each reign and replace if no improvement.</p>
-        <div class="search-row" style="margin-bottom:14px">
+        <div class="search-row" style="margin-bottom:14px;align-items:center">
           <select id="at-risk-reign" style="max-width:220px">
             <option value="">All Time</option>
           </select>
+          <button class="btn btn-danger btn-sm" id="reset-reign-btn">🔄 New Reign — Reset</button>
         </div>
         <div id="at-risk-wrap"></div>
       </div>
@@ -240,6 +242,21 @@ textarea{resize:vertical;min-height:80px;}
           • <span style="color:var(--amber)">Consecutive misses (40pts)</span> — streak of recent events missed<br>
           • <span style="color:var(--fg2)">Total events (20pts)</span> — raw count attended
         </p>
+      </div>
+    </div>
+
+    <!-- REIGNS -->
+    <div class="page" id="page-reigns">
+      <div class="card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+          <div class="card-title" style="margin-bottom:0">👑 Reign Archives</div>
+          <select id="reign-select" style="max-width:280px">
+            <option value="">— Select a reign —</option>
+          </select>
+        </div>
+        <div id="reign-detail-wrap">
+          <div class="empty"><div class="empty-icon">👑</div><div class="empty-label">Select a reign above to view its data</div></div>
+        </div>
       </div>
     </div>
 
@@ -380,7 +397,7 @@ function promptAdminPin(onSuccess) {
 }
 
 // ── Navigation ────────────────────────────────────────────────────────────────
-const pages = { dashboard:$('page-dashboard'), 'log-event':$('page-log-event'), members:$('page-members'), 'at-risk':$('page-at-risk'), history:$('page-history'), settings:$('page-settings') };
+const pages = { dashboard:$('page-dashboard'), 'log-event':$('page-log-event'), members:$('page-members'), 'at-risk':$('page-at-risk'), history:$('page-history'), reigns:$('page-reigns'), settings:$('page-settings') };
 document.querySelectorAll('.nav-tab').forEach(btn => {
   btn.addEventListener('click', () => {
     const p = btn.dataset.page;
@@ -400,6 +417,7 @@ document.querySelectorAll('.nav-tab').forEach(btn => {
     if (p==='members') renderMembers();
     if (p==='at-risk') renderAtRisk();
     if (p==='history') renderHistory();
+    if (p==='reigns') renderReigns();
     if (p==='settings') renderSettings();
   });
 });
@@ -785,8 +803,8 @@ function renderAtRisk() {
     return { name, attended, total, pct: Math.round(pct*100), misses, risk };
   });
 
-  // Sort by risk desc, take bottom 10
-  const bottom = scored.sort((a,b) => b.risk - a.risk).slice(0, 10);
+  // Sort by risk desc, take bottom 20
+  const bottom = scored.sort((a,b) => b.risk - a.risk).slice(0, 20);
 
   if (!bottom.length) {
     wrap.innerHTML = '<div class="empty"><div class="empty-icon">✅</div><div class="empty-label">Not enough data yet</div></div>';
@@ -812,6 +830,107 @@ function renderAtRisk() {
     }).join('')}</tbody></table></div>`;
 }
 $('at-risk-reign').addEventListener('change', renderAtRisk);
+$('reset-reign-btn').addEventListener('click', () => {
+  promptAdminPin(() => {
+    const currentName = prompt('Name the reign you are CLOSING (e.g. "Reign 2 — Oct 2026"):');
+    if (!currentName || !currentName.trim()) return;
+    const nextName = prompt('Name the NEW reign starting now (e.g. "Reign 3 — Nov 2026"):');
+    if (!nextName || !nextName.trim()) return;
+    // Archive the closing reign
+    const snapshot = {
+      label: currentName.trim(),
+      nextReign: nextName.trim(),
+      archivedAt: new Date().toISOString(),
+      events: [...events]
+    };
+    const archives = store.get('vg-reign-archives', []);
+    archives.push(snapshot);
+    store.set('vg-reign-archives', archives);
+    store.setRaw('vg-current-reign', nextName.trim());
+    events = []; saveEvents(); buildMemberData();
+    renderAtRisk();
+    toast(`✅ "${currentName.trim()}" archived — "${nextName.trim()}" has begun!`);
+  });
+});
+
+// ── Render Reigns ─────────────────────────────────────────────────────────────
+function renderReigns() {
+  const archives = store.get('vg-reign-archives', []);
+  const sel = $('reign-select');
+  const detail = $('reign-detail-wrap');
+
+  if (!archives.length) {
+    sel.innerHTML = '<option value="">— No archived reigns yet —</option>';
+    detail.innerHTML = '<div class="empty"><div class="empty-icon">👑</div><div class="empty-label">No reigns archived yet. Use "New Reign — Reset" in the At Risk tab to archive a reign.</div></div>';
+    return;
+  }
+
+  sel.innerHTML = '<option value="">— Select a reign —</option>' +
+    archives.map((a, i) => `<option value="${i}">${a.label}</option>`).reverse().join('');
+
+  function showReign(idx) {
+    if (idx === '' || idx === null) {
+      detail.innerHTML = '<div class="empty"><div class="empty-icon">👑</div><div class="empty-label">Select a reign above to view its data</div></div>';
+      return;
+    }
+    const arch = archives[idx];
+    const evs = arch.events || [];
+    const total = evs.length;
+
+    if (!total) {
+      detail.innerHTML = `<div class="empty"><div class="empty-icon">📋</div><div class="empty-label">No events were logged in this reign</div></div>`;
+      return;
+    }
+
+    // Compute at-risk for this archived reign
+    const allNames = [...new Set([...evs.flatMap(e => e.attendees||[]), ...roster])];
+    const scored = allNames.map(name => {
+      const attended = evs.filter(e => (e.attendees||[]).includes(name)).length;
+      const pct = total ? attended / total : 0;
+      const sortedEvs = [...evs].sort((a,b) => b.date.localeCompare(a.date));
+      let misses = 0;
+      for (const ev of sortedEvs) { if ((ev.attendees||[]).includes(name)) break; misses++; }
+      const risk = Math.round((1-pct)*40 + Math.min(misses/total,1)*40 + (1-Math.min(attended/(total||1),1))*20);
+      return { name, attended, total, pct: Math.round(pct*100), misses, risk };
+    }).sort((a,b) => b.risk - a.risk);
+
+    const bottom20 = scored.slice(0, 20);
+    const archDate = new Date(arch.archivedAt).toLocaleDateString('default',{month:'long',day:'numeric',year:'numeric'});
+
+    detail.innerHTML = `
+      <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px">
+        <div class="stat-tile" style="flex:1;min-width:120px"><div class="label">Events</div><div class="value">${total}</div></div>
+        <div class="stat-tile" style="flex:1;min-width:120px"><div class="label">Members Tracked</div><div class="value">${allNames.length}</div></div>
+        <div class="stat-tile" style="flex:1;min-width:120px"><div class="label">Archived</div><div class="value" style="font-size:14px;padding-top:4px">${archDate}</div></div>
+        ${arch.nextReign ? `<div class="stat-tile" style="flex:1;min-width:120px"><div class="label">Followed By</div><div class="value" style="font-size:13px;padding-top:4px">${arch.nextReign}</div></div>` : ''}
+      </div>
+      <div style="font-weight:600;font-size:13px;margin-bottom:8px;color:var(--fg2)">⚠️ Bottom 20 — At Risk</div>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>#</th><th>Member</th><th>Attended</th><th>Rate</th><th>Consec. Misses</th><th>Risk Score</th></tr></thead>
+        <tbody>${bottom20.map((m,i) => {
+          const riskLabel = m.risk >= 70 ? 'badge-red' : m.risk >= 40 ? 'badge-amber' : 'badge-green';
+          const pctColor = m.pct >= 80 ? 'var(--green)' : m.pct >= 50 ? 'var(--amber)' : 'var(--red)';
+          const bar = `<div class="progress-bar"><div class="progress-fill" style="width:${m.pct}%;background:${pctColor}"></div></div>`;
+          const missDisplay = m.misses > 0 ? `<span style="color:var(--red)">❌ ${m.misses} in a row</span>` : `<span style="color:var(--green)">✅ None</span>`;
+          return `<tr>
+            <td style="color:var(--fg3);font-weight:600">${i+1}</td>
+            <td class="name">${m.name}</td>
+            <td>${m.attended}/${m.total}</td>
+            <td>${bar}<span style="font-size:12px;color:${pctColor}">${m.pct}%</span></td>
+            <td>${missDisplay}</td>
+            <td><span class="badge ${riskLabel}" style="font-size:13px;padding:3px 10px">${m.risk}</span></td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table></div>`;
+  }
+
+  sel.addEventListener('change', () => showReign(sel.value !== '' ? parseInt(sel.value) : ''));
+  // Auto-show most recent
+  if (archives.length) {
+    sel.value = archives.length - 1;
+    showReign(archives.length - 1);
+  }
+}
 
 // ── Render History ────────────────────────────────────────────────────────────
 function renderHistory() {
