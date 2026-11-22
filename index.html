@@ -115,6 +115,7 @@ textarea{resize:vertical;min-height:80px;}
       <button class="nav-tab active" data-page="dashboard">📊 Dashboard</button>
       <button class="nav-tab" data-page="log-event">📸 Log Event</button>
       <button class="nav-tab" data-page="members">👥 Members</button>
+      <button class="nav-tab" data-page="at-risk">⚠️ At Risk</button>
       <button class="nav-tab" data-page="history">📋 History</button>
       <button class="nav-tab" data-page="settings">⚙️ Settings</button>
     </div>
@@ -219,6 +220,29 @@ textarea{resize:vertical;min-height:80px;}
       </div>
     </div>
 
+    <!-- AT RISK -->
+    <div class="page" id="page-at-risk">
+      <div class="card">
+        <div class="card-title">⚠️ At-Risk Members — Bottom 10</div>
+        <p style="font-size:13px;color:var(--fg2);margin-bottom:14px">Ranked by a combined risk score: low attendance count, low attendance %, and consecutive missed events. Review each reign and replace if no improvement.</p>
+        <div class="search-row" style="margin-bottom:14px">
+          <select id="at-risk-reign" style="max-width:220px">
+            <option value="">All Time</option>
+          </select>
+        </div>
+        <div id="at-risk-wrap"></div>
+      </div>
+      <div class="card" style="margin-top:12px">
+        <div class="card-title">Risk Score Breakdown</div>
+        <p style="font-size:12px;color:var(--fg2);line-height:1.6">
+          Each member gets a <strong>risk score 0–100</strong> (higher = more at risk):<br>
+          • <span style="color:var(--red)">Attendance % (40pts)</span> — fewer events attended relative to total<br>
+          • <span style="color:var(--amber)">Consecutive misses (40pts)</span> — streak of recent events missed<br>
+          • <span style="color:var(--fg2)">Total events (20pts)</span> — raw count attended
+        </p>
+      </div>
+    </div>
+
     <!-- HISTORY -->
     <div class="page" id="page-history">
       <div class="card">
@@ -252,6 +276,14 @@ textarea{resize:vertical;min-height:80px;}
         <div class="card-title">Danger Zone</div>
         <p style="font-size:13px;color:var(--fg2);margin-bottom:12px">Delete all stored attendance data. This cannot be undone.</p>
         <button class="btn btn-danger" id="clear-all-btn">🗑️ Clear All Attendance Data</button>
+      </div>
+      <div class="card" style="margin-top:12px">
+        <div class="card-title">Admin Access</div>
+        <p style="font-size:13px;color:var(--fg2);margin-bottom:12px">Lock Settings now, or change your admin PIN.</p>
+        <div class="btn-row">
+          <button class="btn btn-secondary" id="lock-settings-btn">🔒 Lock Settings</button>
+          <button class="btn btn-secondary" id="change-pin-btn">🔑 Change PIN</button>
+        </div>
       </div>
     </div>
 
@@ -325,16 +357,62 @@ $('clear-api-key-btn').addEventListener('click', () => {
   store.del('vg-apikey'); updateApiKeyStatus(); toast('API key cleared');
 });
 
+// ── Admin PIN ─────────────────────────────────────────────────────────────────
+let adminUnlocked = false;
+
+function hashPin(pin) {
+  // Simple hash — good enough for a local access gate (not crypto-secure)
+  let h = 0;
+  for (let i = 0; i < pin.length; i++) { h = Math.imul(31, h) + pin.charCodeAt(i) | 0; }
+  return h.toString(36);
+}
+
+function getStoredPinHash() { return store.raw('vg-admin-pin'); }
+
+function promptAdminPin(onSuccess) {
+  const stored = getStoredPinHash();
+  if (!stored) {
+    // First time — set a PIN
+    const pin = prompt('No admin PIN set yet.\n\nCreate your admin PIN (numbers & letters):');
+    if (!pin || pin.trim().length < 4) { toast('⚠️ PIN must be at least 4 characters'); return; }
+    const confirm = prompt('Confirm your PIN:');
+    if (pin !== confirm) { toast('⚠️ PINs did not match'); return; }
+    store.setRaw('vg-admin-pin', hashPin(pin));
+    adminUnlocked = true;
+    toast('✅ Admin PIN set! Settings unlocked.');
+    onSuccess();
+  } else {
+    const pin = prompt('🔒 Admin access required.\n\nEnter your PIN:');
+    if (!pin) return;
+    if (hashPin(pin) === stored) {
+      adminUnlocked = true;
+      onSuccess();
+    } else {
+      toast('❌ Incorrect PIN');
+    }
+  }
+}
+
 // ── Navigation ────────────────────────────────────────────────────────────────
-const pages = { dashboard:$('page-dashboard'), 'log-event':$('page-log-event'), members:$('page-members'), history:$('page-history'), settings:$('page-settings') };
+const pages = { dashboard:$('page-dashboard'), 'log-event':$('page-log-event'), members:$('page-members'), 'at-risk':$('page-at-risk'), history:$('page-history'), settings:$('page-settings') };
 document.querySelectorAll('.nav-tab').forEach(btn => {
   btn.addEventListener('click', () => {
     const p = btn.dataset.page;
+    if (p === 'settings' && !adminUnlocked) {
+      promptAdminPin(() => {
+        document.querySelectorAll('.nav-tab').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        Object.entries(pages).forEach(([k,el]) => el.classList.toggle('active', k==='settings'));
+        renderSettings();
+      });
+      return;
+    }
     document.querySelectorAll('.nav-tab').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     Object.entries(pages).forEach(([k,el]) => el.classList.toggle('active', k===p));
     if (p==='dashboard') renderDashboard();
     if (p==='members') renderMembers();
+    if (p==='at-risk') renderAtRisk();
     if (p==='history') renderHistory();
     if (p==='settings') renderSettings();
   });
@@ -677,6 +755,78 @@ function renderMembers() {
 $('member-search').addEventListener('input', renderMembers);
 $('filter-event-type').addEventListener('change', renderMembers);
 
+// ── Render At Risk ────────────────────────────────────────────────────────────
+function renderAtRisk() {
+  const wrap = $('at-risk-wrap');
+  const reignSel = $('at-risk-reign');
+
+  // Populate reign dropdown from unique event dates grouped by month
+  const reigns = [...new Set(events.map(e => e.date ? e.date.slice(0,7) : null).filter(Boolean))].sort().reverse();
+  reignSel.innerHTML = '<option value="">All Time</option>' +
+    reigns.map(r => `<option value="${r}">${new Date(r+'-02').toLocaleString('default',{month:'long',year:'numeric'})}</option>`).join('');
+
+  const selectedReign = reignSel.value;
+  const filtEvs = selectedReign ? events.filter(e => e.date && e.date.startsWith(selectedReign)) : events;
+  const total = filtEvs.length;
+
+  if (!total) {
+    wrap.innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-label">No events logged yet</div></div>';
+    return;
+  }
+
+  // Build roster of all known members
+  let allNames = [...new Set([...Object.keys(memberData), ...roster])];
+
+  // Score each member
+  const scored = allNames.map(name => {
+    const attended = filtEvs.filter(e => (e.attendees||[]).includes(name)).length;
+    const pct = total ? attended / total : 0;
+
+    // Consecutive misses from most recent event backwards
+    const sortedEvs = [...filtEvs].sort((a,b) => b.date.localeCompare(a.date));
+    let misses = 0;
+    for (const ev of sortedEvs) {
+      if ((ev.attendees||[]).includes(name)) break;
+      misses++;
+    }
+
+    // Risk score 0-100 (higher = more at risk)
+    const pctScore  = (1 - pct) * 40;           // 40pts: low attendance %
+    const missScore = Math.min(misses / total, 1) * 40; // 40pts: consecutive misses
+    const cntScore  = (1 - Math.min(attended / (total || 1), 1)) * 20; // 20pts: low count
+    const risk = Math.round(pctScore + missScore + cntScore);
+
+    return { name, attended, total, pct: Math.round(pct*100), misses, risk };
+  });
+
+  // Sort by risk desc, take bottom 10
+  const bottom = scored.sort((a,b) => b.risk - a.risk).slice(0, 10);
+
+  if (!bottom.length) {
+    wrap.innerHTML = '<div class="empty"><div class="empty-icon">✅</div><div class="empty-label">Not enough data yet</div></div>';
+    return;
+  }
+
+  wrap.innerHTML = `<div class="tbl-wrap"><table>
+    <thead><tr><th>#</th><th>Member</th><th>Attended</th><th>Rate</th><th>Consec. Misses</th><th>Risk Score</th></tr></thead>
+    <tbody>${bottom.map((m,i) => {
+      const riskColor = m.risk >= 70 ? 'var(--red)' : m.risk >= 40 ? 'var(--amber)' : 'var(--green)';
+      const riskLabel = m.risk >= 70 ? 'badge-red' : m.risk >= 40 ? 'badge-amber' : 'badge-green';
+      const pctColor = m.pct >= 80 ? 'var(--green)' : m.pct >= 50 ? 'var(--amber)' : 'var(--red)';
+      const bar = `<div class="progress-bar"><div class="progress-fill" style="width:${m.pct}%;background:${pctColor}"></div></div>`;
+      const missDisplay = m.misses > 0 ? `<span style="color:var(--red)">❌ ${m.misses} in a row</span>` : `<span style="color:var(--green)">✅ None</span>`;
+      return `<tr>
+        <td style="color:var(--fg3);font-weight:600">${i+1}</td>
+        <td class="name">${m.name}</td>
+        <td>${m.attended}/${m.total}</td>
+        <td>${bar}<span style="font-size:12px;color:${pctColor}">${m.pct}%</span></td>
+        <td>${missDisplay}</td>
+        <td><span class="badge badge-${riskLabel}" style="font-size:13px;padding:3px 10px">${m.risk}</span></td>
+      </tr>`;
+    }).join('')}</tbody></table></div>`;
+}
+$('at-risk-reign').addEventListener('change', renderAtRisk);
+
 // ── Render History ────────────────────────────────────────────────────────────
 function renderHistory() {
   if(!events.length){$('history-wrap').innerHTML='<div class="empty"><div class="empty-icon">📋</div><div class="empty-label">No events logged yet</div></div>';return;}
@@ -715,6 +865,26 @@ $('save-roster-btn').addEventListener('click',()=>{
 $('clear-all-btn').addEventListener('click',()=>{
   if(!confirm('Delete ALL attendance data? This cannot be undone.'))return;
   events=[]; saveEvents(); buildMemberData(); toast('All attendance data cleared');
+});
+$('lock-settings-btn').addEventListener('click',()=>{
+  adminUnlocked = false;
+  // Switch back to dashboard
+  document.querySelectorAll('.nav-tab').forEach(b => b.classList.remove('active'));
+  document.querySelector('[data-page="dashboard"]').classList.add('active');
+  Object.entries(pages).forEach(([k,el]) => el.classList.toggle('active', k==='dashboard'));
+  renderDashboard();
+  toast('🔒 Settings locked');
+});
+$('change-pin-btn').addEventListener('click',()=>{
+  const current = prompt('Enter your current PIN to confirm:');
+  if (!current) return;
+  if (hashPin(current) !== getStoredPinHash()) { toast('❌ Incorrect current PIN'); return; }
+  const newPin = prompt('Enter your new PIN (min 4 characters):');
+  if (!newPin || newPin.trim().length < 4) { toast('⚠️ PIN must be at least 4 characters'); return; }
+  const confirm = prompt('Confirm new PIN:');
+  if (newPin !== confirm) { toast('⚠️ PINs did not match'); return; }
+  store.setRaw('vg-admin-pin', hashPin(newPin));
+  toast('✅ PIN updated!');
 });
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
