@@ -117,7 +117,7 @@ textarea{resize:vertical;min-height:80px;}
       <button class="nav-tab" data-page="members">👥 Members</button>
       <button class="nav-tab" data-page="at-risk">⚠️ At Risk</button>
       <button class="nav-tab" data-page="history">📋 History</button>
-      <button class="nav-tab" data-page="settings">⚙️ Settings</button>
+      <button class="nav-tab" data-page="settings">⚙️ Settings 🔒</button>
     </div>
   </nav>
   <main>
@@ -279,9 +279,9 @@ textarea{resize:vertical;min-height:80px;}
       </div>
       <div class="card" style="margin-top:12px">
         <div class="card-title">Admin Access</div>
-        <p style="font-size:13px;color:var(--fg2);margin-bottom:12px">Lock Settings now, or change your admin PIN.</p>
+        <p style="font-size:13px;color:var(--fg2);margin-bottom:12px">Lock admin tabs (History &amp; Settings), or change your PIN.</p>
         <div class="btn-row">
-          <button class="btn btn-secondary" id="lock-settings-btn">🔒 Lock Settings</button>
+          <button class="btn btn-secondary" id="lock-settings-btn">🔒 Lock Admin Tabs</button>
           <button class="btn btn-secondary" id="change-pin-btn">🔑 Change PIN</button>
         </div>
       </div>
@@ -829,9 +829,12 @@ function renderHistory() {
     </div>`).join('');
   document.querySelectorAll('[data-ev-id]').forEach(btn=>{
     btn.addEventListener('click',()=>{
-      if(!confirm('Delete this event?'))return;
-      events=events.filter(e=>e.id!==btn.dataset.evId);
-      saveEvents(); buildMemberData(); renderHistory(); toast('Event deleted');
+      const evId = btn.dataset.evId;
+      promptAdminPin(() => {
+        if(!confirm('Delete this event?'))return;
+        events=events.filter(e=>e.id!==evId);
+        saveEvents(); buildMemberData(); renderHistory(); toast('Event deleted');
+      });
     });
   });
 }
@@ -859,7 +862,7 @@ $('lock-settings-btn').addEventListener('click',()=>{
   document.querySelector('[data-page="dashboard"]').classList.add('active');
   Object.entries(pages).forEach(([k,el]) => el.classList.toggle('active', k==='dashboard'));
   renderDashboard();
-  toast('🔒 Settings locked');
+  toast('🔒 Admin tabs locked');
 });
 $('change-pin-btn').addEventListener('click',()=>{
   toast('ℹ️ To change the PIN, update the source code and redeploy.');
