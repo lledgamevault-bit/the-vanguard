@@ -361,35 +361,21 @@ $('clear-api-key-btn').addEventListener('click', () => {
 let adminUnlocked = false;
 
 function hashPin(pin) {
-  // Simple hash — good enough for a local access gate (not crypto-secure)
   let h = 0;
   for (let i = 0; i < pin.length; i++) { h = Math.imul(31, h) + pin.charCodeAt(i) | 0; }
   return h.toString(36);
 }
 
-function getStoredPinHash() { return store.raw('vg-admin-pin'); }
+const ADMIN_PIN_HASH = '987jm1'; // hardcoded — change via source when needed
 
 function promptAdminPin(onSuccess) {
-  const stored = getStoredPinHash();
-  if (!stored) {
-    // First time — set a PIN
-    const pin = prompt('No admin PIN set yet.\n\nCreate your admin PIN (numbers & letters):');
-    if (!pin || pin.trim().length < 4) { toast('⚠️ PIN must be at least 4 characters'); return; }
-    const confirm = prompt('Confirm your PIN:');
-    if (pin !== confirm) { toast('⚠️ PINs did not match'); return; }
-    store.setRaw('vg-admin-pin', hashPin(pin));
+  const pin = prompt('🔒 Admin access required.\n\nEnter your PIN:');
+  if (!pin) return;
+  if (hashPin(pin) === ADMIN_PIN_HASH) {
     adminUnlocked = true;
-    toast('✅ Admin PIN set! Settings unlocked.');
     onSuccess();
   } else {
-    const pin = prompt('🔒 Admin access required.\n\nEnter your PIN:');
-    if (!pin) return;
-    if (hashPin(pin) === stored) {
-      adminUnlocked = true;
-      onSuccess();
-    } else {
-      toast('❌ Incorrect PIN');
-    }
+    toast('❌ Incorrect PIN');
   }
 }
 
@@ -876,15 +862,7 @@ $('lock-settings-btn').addEventListener('click',()=>{
   toast('🔒 Settings locked');
 });
 $('change-pin-btn').addEventListener('click',()=>{
-  const current = prompt('Enter your current PIN to confirm:');
-  if (!current) return;
-  if (hashPin(current) !== getStoredPinHash()) { toast('❌ Incorrect current PIN'); return; }
-  const newPin = prompt('Enter your new PIN (min 4 characters):');
-  if (!newPin || newPin.trim().length < 4) { toast('⚠️ PIN must be at least 4 characters'); return; }
-  const confirm = prompt('Confirm new PIN:');
-  if (newPin !== confirm) { toast('⚠️ PINs did not match'); return; }
-  store.setRaw('vg-admin-pin', hashPin(newPin));
-  toast('✅ PIN updated!');
+  toast('ℹ️ To change the PIN, update the source code and redeploy.');
 });
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
