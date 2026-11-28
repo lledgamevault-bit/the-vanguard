@@ -107,6 +107,7 @@ textarea{resize:vertical;min-height:80px;}
   <header>
     <div class="logo"><div class="logo-icon">⚔️</div>Vanguard Attendance</div>
     <div class="header-right">
+      <span id="sync-status" style="font-size:12px;color:var(--fg2)">🔄 Syncing…</span>
       <button class="theme-btn" id="theme-btn" title="Toggle theme">🌙</button>
     </div>
   </header>
@@ -250,9 +251,12 @@ textarea{resize:vertical;min-height:80px;}
       <div class="card">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
           <div class="card-title" style="margin-bottom:0">👑 Reign Archives</div>
-          <select id="reign-select" style="max-width:280px">
-            <option value="">— Select a reign —</option>
-          </select>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <select id="reign-select" style="max-width:240px">
+              <option value="">— Select a reign —</option>
+            </select>
+            <button class="btn btn-danger btn-sm" id="delete-reign-btn" style="display:none">🗑️ Delete</button>
+          </div>
         </div>
         <div id="reign-detail-wrap">
           <div class="empty"><div class="empty-icon">👑</div><div class="empty-label">Select a reign above to view its data</div></div>
@@ -309,7 +313,7 @@ textarea{resize:vertical;min-height:80px;}
 <div id="toast"></div>
 
 <script>
-// ── Storage helpers ───────────────────────────────────────────────────────────
+// ── Storage helpers (localStorage — for PIN, theme, API key only) ─────────────
 const store = {
   get: (k, def) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : def; } catch { return def; } },
   set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
@@ -317,6 +321,17 @@ const store = {
   setRaw: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
   del: k => { try { localStorage.removeItem(k); } catch {} },
 };
+
+// ── Google Sheets API ─────────────────────────────────────────────────────────
+const GS_URL = 'https://script.google.com/macros/s/AKfycbzKqVdcrehLBOkBEU9QFnAu5sf1ur6xw_EgzQPPVxjLuj4O_n04GJtnFdhKStEqL90Y-g/exec';
+
+async function gsCall(params) {
+  const url = GS_URL + '?' + new URLSearchParams(params).toString();
+  const resp = await fetch(url);
+  const data = await resp.json();
+  if (data.error) throw new Error(data.error);
+  return data;
+}
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let members = [];       // chips on log-event form
@@ -326,13 +341,75 @@ let roster = [];        // known member list
 let memberData = {};    // computed from events
 let aliases = {};       // {extractedName: rosterName} — saved mappings
 
-function loadData() {
-  events = store.get('vg-events', []);
-  roster = store.get('vg-roster', []);
-  aliases = store.get('vg-aliases', {});
-  buildMemberData();
+async function loadData() {
+  try {
+    showSyncStatus('loading');
+    const data = await gsCall({ action: 'getAll' });
+    events  = data.events  || [];
+    roster  = data.roster  || [];
+    aliases = data.aliases || {};
+    const reigns = data.reigns || [];
+    store.set('vg-reign-archives', reigns);
+    buildMemberData();
+    showSyncStatus('ok');
+  } catch(e) {
+    showSyncStatus('error');
+    toast('⚠️ Could not load data from Google Sheets');
+  }
 }
-function saveEvents() { store.set('vg-events', events); }
+
+async function saveEvents() {
+  // Save all events to Sheets (called after add/delete)
+  try {
+    for (const ev of events) {
+      await gsCall({ action: 'saveEvent', event: JSON.stringify(ev) });
+    }
+  } catch(e) { toast('⚠️ Sync error — check connection'); }
+}
+
+async function saveEventSingle(ev) {
+  try {
+    await gsCall({ action: 'saveEvent', event: JSON.stringify(ev) });
+    showSyncStatus('ok');
+  } catch(e) { showSyncStatus('error'); toast('⚠️ Sync error saving event'); }
+}
+
+async function deleteEventRemote(id) {
+  try {
+    await gsCall({ action: 'deleteEvent', id });
+    showSyncStatus('ok');
+  } catch(e) { showSyncStatus('error'); toast('⚠️ Sync error deleting event'); }
+}
+
+async function saveRosterRemote() {
+  try {
+    await gsCall({ action: 'saveRoster', roster: JSON.stringify(roster) });
+    showSyncStatus('ok');
+  } catch(e) { showSyncStatus('error'); toast('⚠️ Sync error saving roster'); }
+}
+
+async function saveAliasesRemote() {
+  try {
+    await gsCall({ action: 'saveAliases', aliases: JSON.stringify(aliases) });
+    showSyncStatus('ok');
+  } catch(e) { showSyncStatus('error'); }
+}
+
+async function saveReignsRemote() {
+  try {
+    const reigns = store.get('vg-reign-archives', []);
+    await gsCall({ action: 'saveReigns', reigns: JSON.stringify(reigns) });
+    showSyncStatus('ok');
+  } catch(e) { showSyncStatus('error'); toast('⚠️ Sync error saving reigns'); }
+}
+
+function showSyncStatus(state) {
+  const el = $('sync-status');
+  if (!el) return;
+  if (state === 'loading') { el.textContent = '🔄 Syncing…'; el.style.color = 'var(--fg2)'; }
+  else if (state === 'ok')  { el.textContent = '✅ Synced';   el.style.color = 'var(--green)'; }
+  else                      { el.textContent = '⚠️ Offline';  el.style.color = 'var(--amber)'; }
+}
 
 // ── Utils ─────────────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
@@ -496,11 +573,11 @@ function renderUnrecognized() {
       if (val === '__new__') {
         addMember(name);
         // optionally add to roster
-        if (!roster.includes(name)) { roster.push(name); roster = sortRoster(roster); store.set('vg-roster', roster); }
+        if (!roster.includes(name)) { roster.push(name); roster = sortRoster(roster); saveRosterRemote(); }
       } else {
         // save alias mapping
         aliases[name] = val;
-        store.set('vg-aliases', aliases);
+        saveAliasesRemote();
         addMember(val);
       }
       unrecognized = unrecognized.filter(x => x !== name);
@@ -656,7 +733,7 @@ $('save-event-btn').addEventListener('click', () => {
     attendees: [...members],
     createdAt: new Date().toISOString()
   };
-  events.unshift(ev); saveEvents(); buildMemberData();
+  events.unshift(ev); saveEventSingle(ev); buildMemberData();
   toast(`✅ Saved — ${members.length} attendees logged`);
   members = []; unrecognized = []; renderChips(); renderUnrecognized();
   $('ev-notes').value = '';
@@ -832,13 +909,18 @@ function renderAtRisk() {
 $('at-risk-reign').addEventListener('change', renderAtRisk);
 $('reset-reign-btn').addEventListener('click', () => {
   promptAdminPin(() => {
-    const currentName = prompt('Name the reign you are CLOSING (e.g. "Reign 2 — Oct 2026"):');
-    if (!currentName || !currentName.trim()) return;
-    const nextName = prompt('Name the NEW reign starting now (e.g. "Reign 3 — Nov 2026"):');
+    const stored = store.raw('vg-current-reign');
+    let currentName = stored && stored.trim() ? stored.trim() : null;
+    if (!currentName) {
+      currentName = prompt('Name the reign you are CLOSING (e.g. "Reign 2 — Oct 2026"):');
+      if (!currentName || !currentName.trim()) return;
+      currentName = currentName.trim();
+    }
+    const nextName = prompt(`"${currentName}" will be archived.\n\nName the NEW reign starting now (e.g. "Reign 3 — Nov 2026"):`);
     if (!nextName || !nextName.trim()) return;
     // Archive the closing reign
     const snapshot = {
-      label: currentName.trim(),
+      label: currentName,
       nextReign: nextName.trim(),
       archivedAt: new Date().toISOString(),
       events: [...events]
@@ -847,9 +929,13 @@ $('reset-reign-btn').addEventListener('click', () => {
     archives.push(snapshot);
     store.set('vg-reign-archives', archives);
     store.setRaw('vg-current-reign', nextName.trim());
-    events = []; saveEvents(); buildMemberData();
+    events = [];
+    // Clear all remote events by deleting each one
+    gsCall({action:'saveReigns', reigns: JSON.stringify(archives)});
+    for (const ev of snapshot.events) { gsCall({action:'deleteEvent', id: ev.id}); }
+    buildMemberData();
     renderAtRisk();
-    toast(`✅ "${currentName.trim()}" archived — "${nextName.trim()}" has begun!`);
+    toast(`✅ "${currentName}" archived — "${nextName.trim()}" has begun!`);
   });
 });
 
@@ -924,10 +1010,33 @@ function renderReigns() {
       </table></div>`;
   }
 
-  sel.addEventListener('change', () => showReign(sel.value !== '' ? parseInt(sel.value) : ''));
+  const deleteBtn = $('delete-reign-btn');
+
+  sel.addEventListener('change', () => {
+    const hasVal = sel.value !== '';
+    deleteBtn.style.display = hasVal ? 'inline-flex' : 'none';
+    showReign(hasVal ? parseInt(sel.value) : '');
+  });
+
+  deleteBtn.addEventListener('click', () => {
+    const idx = parseInt(sel.value);
+    const arch = archives[idx];
+    if (!arch) return;
+    promptAdminPin(() => {
+      if (!confirm(`Delete "${arch.label}" archive? This cannot be undone.`)) return;
+      archives.splice(idx, 1);
+      store.set('vg-reign-archives', archives);
+      saveReignsRemote();
+      deleteBtn.style.display = 'none';
+      renderReigns();
+      toast(`🗑️ "${arch.label}" deleted`);
+    });
+  });
+
   // Auto-show most recent
   if (archives.length) {
     sel.value = archives.length - 1;
+    deleteBtn.style.display = 'inline-flex';
     showReign(archives.length - 1);
   }
 }
@@ -952,7 +1061,7 @@ function renderHistory() {
       promptAdminPin(() => {
         if(!confirm('Delete this event?'))return;
         events=events.filter(e=>e.id!==evId);
-        saveEvents(); buildMemberData(); renderHistory(); toast('Event deleted');
+        deleteEventRemote(evId); buildMemberData(); renderHistory(); toast('Event deleted');
       });
     });
   });
@@ -968,11 +1077,20 @@ function renderSettings() {
 }
 $('save-roster-btn').addEventListener('click',()=>{
   roster=sortRoster($('roster-input').value.split('\n').map(x=>x.trim()).filter(Boolean));
-  store.set('vg-roster',roster); renderSettings(); toast(`✅ Roster saved — ${roster.length} members`);
+  saveRosterRemote(); renderSettings(); toast(`✅ Roster saved — ${roster.length} members`);
 });
 $('clear-all-btn').addEventListener('click',()=>{
   if(!confirm('Delete ALL attendance data? This cannot be undone.'))return;
-  events=[]; saveEvents(); buildMemberData(); toast('All attendance data cleared');
+  promptAdminPin(async () => {
+    // Delete each event from Sheets
+    const toDelete = [...events];
+    events = [];
+    buildMemberData();
+    toast('All attendance data cleared');
+    for (const ev of toDelete) {
+      gsCall({action:'deleteEvent', id: ev.id}).catch(()=>{});
+    }
+  });
 });
 $('lock-settings-btn').addEventListener('click',()=>{
   adminUnlocked = false;
@@ -988,8 +1106,8 @@ $('change-pin-btn').addEventListener('click',()=>{
 });
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
-loadData();
-renderDashboard();
+loadData().then(() => renderDashboard());
+renderDashboard(); // Render immediately with empty state while loading
 updateApiKeyStatus();
 </script>
 </body>
